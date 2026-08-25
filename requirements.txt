@@ -1,0 +1,16 @@
+torch
+torchvision
+Pillow
+PyYAML
+tqdm
+
+# Evaluation
+torchmetrics
+pycocotools
+
+# Experiment tracking
+tensorboard
+
+# Export / Quantization
+onnx
+onnxruntime

@@ -1,0 +1,13 @@
+/data/images/
+/data/annotations/
+/data/*.json
+/venv/
+__pycache__/
+*.pyc
+logs/
+exports/
+checkpoints/
+runs/
+*.pt
+*.pth
+*.safetensors
