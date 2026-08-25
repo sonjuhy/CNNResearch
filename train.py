@@ -1,0 +1,152 @@
+import torch
+import argparse
+import time
+import os
+from data.coco import create_dataloader
+from data.transforms import TrainTransforms
+from models.detector import SOTADetector
+from utils.loss import DetectionLoss
+from utils.logger import setup_logger
+
+# 구글 코랩 TPU (PyTorch XLA) 지원 모듈 로드
+try:
+    import torch_xla.core.xla_model as xm
+    import torch_xla.distributed.xla_multiprocessing as xmp
+    import torch_xla.distributed.parallel_loader as pl
+    TPU_AVAILABLE = True
+except ImportError:
+    TPU_AVAILABLE = False
+
+# TensorBoard 로거 지원 모듈 로드
+try:
+    from torch.utils.tensorboard import SummaryWriter
+    TB_AVAILABLE = True
+except ImportError:
+    TB_AVAILABLE = False
+
+def train_one_epoch(model, dataloader, criterion, optimizer, device, epoch, logger, writer=None, is_tpu=False):
+    model.train()
+    total_loss = 0.0
+    start_time = time.time()
+    
+    # TPU 분산 환경일 경우 Dataloader 매핑
+    if is_tpu:
+        dataloader = pl.ParallelLoader(dataloader, [device]).per_device_loader(device)
+        
+    for batch_idx, (images, targets) in enumerate(dataloader):
+        images = torch.stack(images).to(device)
+        for i in range(len(targets)):
+            targets[i]['boxes'] = targets[i]['boxes'].to(device)
+            targets[i]['labels'] = targets[i]['labels'].to(device)
+            
+        optimizer.zero_grad()
+        predictions = model(images)
+        loss_dict = criterion(predictions, targets)
+        loss = loss_dict['loss_total']
+        
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
+        
+        # TPU 분산 환경은 별도의 optimizer step 호출 사용
+        if is_tpu:
+            xm.optimizer_step(optimizer)
+        else:
+            optimizer.step()
+        
+        total_loss += loss.item()
+        
+        if batch_idx % 10 == 0:
+            msg = (f"Epoch [{epoch}] Batch [{batch_idx}/{len(dataloader)}] "
+                   f"Loss: {loss.item():.4f}")
+            
+            if is_tpu:
+                xm.master_print(msg)
+            else:
+                logger.info(msg)
+                
+            # TensorBoard에 학습 곡선 기록
+            if writer:
+                step = (epoch - 1) * len(dataloader) + batch_idx
+                writer.add_scalar('Loss/total', loss.item(), step)
+                writer.add_scalar('Loss/cls', loss_dict['loss_cls'].item(), step)
+                writer.add_scalar('Loss/box', loss_dict['loss_box'].item(), step)
+                writer.add_scalar('Loss/obj', loss_dict['loss_obj'].item(), step)
+                
+    epoch_time = time.time() - start_time
+    avg_loss = total_loss / len(dataloader)
+    
+    msg = f"✅ Epoch {epoch} 완료 (소요 시간: {epoch_time:.2f}초) | 평균 Loss: {avg_loss:.4f}\n"
+    if is_tpu:
+        xm.master_print(msg)
+    else:
+        logger.info(msg)
+        
+    return avg_loss
+
+def _main_tpu(index, args):
+    device = xm.xla_device()
+    run_training(args, device, is_tpu=True)
+
+def run_training(args, device, is_tpu=False):
+    # DDP/TPU 환경에서는 Master 노드에서만 로깅 수행
+    logger = setup_logger(log_dir="logs") if not is_tpu or xm.is_master_ordinal() else None
+    writer = SummaryWriter(log_dir="runs/sota_detector") if TB_AVAILABLE and (not is_tpu or xm.is_master_ordinal()) else None
+    
+    train_transforms = TrainTransforms(img_size=(640, 640))
+    train_loader = create_dataloader(
+        root_dir="./data/images", 
+        ann_file="./data/annotations.json", 
+        batch_size=args.batch_size, 
+        is_train=True, 
+        num_workers=args.workers,
+        transforms=train_transforms
+    )
+    
+    model = SOTADetector(scale=args.scale).to(device)
+    criterion = DetectionLoss(num_classes=80).to(device)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
+    
+    os.makedirs("checkpoints", exist_ok=True)
+    best_loss = float('inf')
+    
+    for epoch in range(1, args.epochs + 1):
+        avg_loss = train_one_epoch(model, train_loader, criterion, optimizer, device, epoch, logger, writer, is_tpu)
+        scheduler.step()
+        
+        # 모델 가중치(Checkpoint) 저장 
+        if not is_tpu or xm.is_master_ordinal():
+            save_path = f"checkpoints/last_{args.scale}.pt"
+            # TPU 환경 특화 모델 저장 (가중치 CPU 이동 후 저장)
+            if is_tpu: xm.save(model.state_dict(), save_path)
+            else: torch.save(model.state_dict(), save_path)
+            
+            # 베스트 모델 갱신 저장
+            if avg_loss < best_loss:
+                best_loss = avg_loss
+                best_path = f"checkpoints/best_{args.scale}.pt"
+                if is_tpu: xm.save(model.state_dict(), best_path)
+                else: torch.save(model.state_dict(), best_path)
+
+    if writer: writer.close()
+
+def main(args):
+    if args.tpu and TPU_AVAILABLE:
+        print("🚀 Starting Google Colab TPU Training via PyTorch XLA...")
+        xmp.spawn(_main_tpu, args=(args,), nprocs=8, start_method='fork')
+    else:
+        if args.tpu and not TPU_AVAILABLE:
+            print("⚠️ Colab TPU를 요청했으나 torch_xla 패키지가 없습니다. 일반 환경으로 fallback 합니다.")
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        run_training(args, device, is_tpu=False)
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--scale', type=str, default='nano')
+    parser.add_argument('--batch-size', type=int, default=4)
+    parser.add_argument('--epochs', type=int, default=10)
+    parser.add_argument('--lr', type=float, default=1e-3)
+    parser.add_argument('--workers', type=int, default=0)
+    parser.add_argument('--tpu', action='store_true', help='Google Colab TPU 활성화 (DDP)')
+    args = parser.parse_args()
+    main(args)
