@@ -1,0 +1,9 @@
+scale: nano
+batch_size: 32
+epochs: 300
+lr: 0.001
+img_size: 640
+train_root: ./data/images
+train_ann: ./data/annotations.json
+val_root: ./data/val_images
+val_ann: ./data/val_annotations.json
