@@ -51,9 +51,24 @@ def run_evaluation(args):
             gts = []
             for i in range(len(images)):
                 boxes, scores, labels = postprocess(predictions, batch_idx=i)
-                preds.append(dict(boxes=boxes, scores=scores, labels=labels))
                 
-                gt_boxes = targets[i]['boxes'].to(device)
+                # Letterbox 역변환: 원본 이미지 좌표계로 복원
+                if 'orig_size' in targets[i] and 'r' in targets[i] and 'pad' in targets[i]:
+                    r = targets[i]['r'].to(boxes.device)
+                    pad = targets[i]['pad'].to(boxes.device)
+                    w0, h0 = targets[i]['orig_size'][0].item(), targets[i]['orig_size'][1].item()
+                    
+                    if boxes.numel() > 0:
+                        boxes[:, [0, 2]] = (boxes[:, [0, 2]] - pad[0]) / r
+                        boxes[:, [1, 3]] = (boxes[:, [1, 3]] - pad[1]) / r
+                        boxes[:, [0, 2]] = boxes[:, [0, 2]].clamp(0, w0)
+                        boxes[:, [1, 3]] = boxes[:, [1, 3]].clamp(0, h0)
+                    
+                    gt_boxes = targets[i].get('orig_boxes', targets[i]['boxes']).to(device)
+                else:
+                    gt_boxes = targets[i]['boxes'].to(device)
+                    
+                preds.append(dict(boxes=boxes, scores=scores, labels=labels))
                 gt_labels = targets[i]['labels'].to(device)
                 gts.append(dict(boxes=gt_boxes, labels=gt_labels))
                 

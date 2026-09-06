@@ -74,12 +74,12 @@ class TargetAssigner(nn.Module):
         in_center = ((cx - gt_cx.unsqueeze(0)).abs() < radius) & \
                     ((cy - gt_cy.unsqueeze(0)).abs() < radius)
 
-        REG_RANGES = {8: (0, 64), 16: (64, 128), 32: (128, float('inf'))}
+        REG_RANGES = {8: (0, 32), 16: (32, 64), 32: (64, float('inf'))}
         max_reg = torch.stack([l, t, r, b], dim=-1).max(dim=-1).values
         lo = torch.where(strides == 8, 0.0,
-             torch.where(strides == 16, 64.0, 128.0)).unsqueeze(1).to(device)
-        hi = torch.where(strides == 8, 64.0,
-             torch.where(strides == 16, 128.0, float('inf'))).unsqueeze(1).to(device)
+             torch.where(strides == 16, 32.0, 64.0)).unsqueeze(1).to(device)
+        hi = torch.where(strides == 8, 32.0,
+             torch.where(strides == 16, 64.0, float('inf'))).unsqueeze(1).to(device)
         in_level = (max_reg >= lo) & (max_reg <= hi)
 
         candidate = in_box & in_center & in_level
