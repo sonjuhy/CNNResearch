@@ -94,8 +94,8 @@ def run_training(args, device, is_tpu=False):
     
     train_transforms = TrainTransforms(img_size=(640, 640))
     train_loader = create_dataloader(
-        root_dir="./data/images", 
-        ann_file="./data/annotations.json", 
+        root_dir=args.train_root, 
+        ann_file=args.train_ann, 
         batch_size=args.batch_size, 
         is_train=True, 
         num_workers=args.workers,
@@ -107,24 +107,46 @@ def run_training(args, device, is_tpu=False):
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
     
-    os.makedirs("checkpoints", exist_ok=True)
+    start_epoch = 1
+    if args.resume and os.path.exists(args.resume):
+        checkpoint = torch.load(args.resume, map_location=device)
+        if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+            model.load_state_dict(checkpoint['model_state_dict'])
+            if 'optimizer_state_dict' in checkpoint:
+                optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            if 'scheduler_state_dict' in checkpoint:
+                scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+            start_epoch = checkpoint.get('epoch', 0) + 1
+        elif isinstance(checkpoint, dict):
+            model.load_state_dict(checkpoint)
+        msg = f"✅ 체크포인트 로드 완료: {args.resume} (Epoch {start_epoch}부터 재개)"
+        if is_tpu and xm: xm.master_print(msg)
+        elif logger: logger.info(msg)
+    
+    os.makedirs(args.checkpoint_dir, exist_ok=True)
     best_loss = float('inf')
     
-    for epoch in range(1, args.epochs + 1):
+    for epoch in range(start_epoch, args.epochs + 1):
         avg_loss = train_one_epoch(model, train_loader, criterion, optimizer, device, epoch, logger, writer, is_tpu)
         scheduler.step()
         
         # 모델 가중치(Checkpoint) 저장 
         if not is_tpu or xm.is_master_ordinal():
-            save_path = f"checkpoints/last_{args.scale}.pt"
-            # TPU 환경 특화 모델 저장 (가중치 CPU 이동 후 저장)
-            if is_tpu: xm.save(model.state_dict(), save_path)
-            else: torch.save(model.state_dict(), save_path)
+            save_path = os.path.join(args.checkpoint_dir, f"last_{args.scale}.pt")
+            save_payload = {
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict(),
+                'loss': avg_loss
+            }
+            if is_tpu: xm.save(save_payload, save_path)
+            else: torch.save(save_payload, save_path)
             
-            # 베스트 모델 갱신 저장
+            # 베스트 모델 갱신 저장 (평가/배포 편의를 위해 순수 state_dict도 함께 호환)
             if avg_loss < best_loss:
                 best_loss = avg_loss
-                best_path = f"checkpoints/best_{args.scale}.pt"
+                best_path = os.path.join(args.checkpoint_dir, f"best_{args.scale}.pt")
                 if is_tpu: xm.save(model.state_dict(), best_path)
                 else: torch.save(model.state_dict(), best_path)
 
@@ -141,12 +163,28 @@ def main(args):
         run_training(args, device, is_tpu=False)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--scale', type=str, default='nano')
+    parser = argparse.ArgumentParser(description="SOTADetector Training Script")
+    parser.add_argument('--config', type=str, default=None, help='YAML 설정 파일 경로 (e.g. configs/nano.yaml)')
+    parser.add_argument('--scale', type=str, default='nano', choices=['nano', 'medium', 'xlarge'])
     parser.add_argument('--batch-size', type=int, default=4)
     parser.add_argument('--epochs', type=int, default=10)
     parser.add_argument('--lr', type=float, default=1e-3)
     parser.add_argument('--workers', type=int, default=0)
+    parser.add_argument('--resume', type=str, default=None, help='재개할 체크포인트 경로')
+    parser.add_argument('--checkpoint-dir', type=str, default='checkpoints', help='체크포인트 저장 디렉터리')
+    parser.add_argument('--train-root', type=str, default='./data/images', help='학습 이미지 디렉터리')
+    parser.add_argument('--train-ann', type=str, default='./data/annotations.json', help='학습 어노테이션 파일 경로')
     parser.add_argument('--tpu', action='store_true', help='Google Colab TPU 활성화 (DDP)')
     args = parser.parse_args()
+    
+    if args.config and os.path.exists(args.config):
+        import yaml
+        with open(args.config, 'r') as f:
+            cfg = yaml.safe_load(f)
+        for k, v in cfg.items():
+            k_opt = k.replace('-', '_')
+            if hasattr(args, k_opt) and getattr(args, k_opt) == parser.get_default(k_opt):
+                setattr(args, k_opt, v)
+        print(f"📄 Config 로드 완료: {args.config}")
+        
     main(args)

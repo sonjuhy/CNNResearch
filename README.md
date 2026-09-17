@@ -5,7 +5,15 @@
 <a name="english"></a>
 # CNN Research Project (August 2026 SOTA)
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/sonjuhy/CNNResearch/blob/main/notebooks/Colab_SOTADetector.ipynb)
+
 Welcome to our cutting-edge CNN research project. This repository focuses on developing State-Of-The-Art (SOTA) vision models using Python 3.14 and PyTorch, pushing the boundaries of what's possible in computer vision as of August 2026.
+
+## 🚀 Quick Start with Google Colab
+You can train and evaluate `SOTADetector` directly on Google Colab (GPU/TPU) with Google Drive checkpoint backup:
+1. Click the **[Open In Colab](https://colab.research.google.com/github/sonjuhy/CNNResearch/blob/main/notebooks/Colab_SOTADetector.ipynb)** badge above.
+2. Select your runtime accelerator: **T4 / A100 GPU** or **TPU**.
+3. Run the notebook cells to automatically mount Google Drive, download the dataset, train, and export models.
 
 ## 🎯 Project Priorities
 
@@ -45,7 +53,15 @@ This project is licensed under the Apache License 2.0.
 <a name="한국어"></a>
 # CNN Research Project (2026년 8월 기준 SOTA)
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/sonjuhy/CNNResearch/blob/main/notebooks/Colab_SOTADetector.ipynb)
+
 최첨단 CNN 연구 프로젝트에 오신 것을 환영합니다. 이 저장소는 Python 3.14 및 PyTorch를 사용하여 2026년 8월 기준 컴퓨터 비전 분야의 한계를 뛰어넘는 SOTA(State-Of-The-Art) 비전 모델을 개발하는 데 중점을 둡니다.
+
+## 🚀 Google Colab에서 시작하기
+Google Colab(GPU/TPU) 환경에서 구글 드라이브 가중치 백업과 함께 `SOTADetector`를 즉시 학습하고 평가할 수 있습니다:
+1. 상단의 **[Open In Colab](https://colab.research.google.com/github/sonjuhy/CNNResearch/blob/main/notebooks/Colab_SOTADetector.ipynb)** 뱃지를 클릭합니다.
+2. 런타임 유형을 선택합니다: **T4 / A100 GPU** 또는 **TPU**.
+3. 노트북의 셀을 순서대로 실행하여 구글 드라이브 마운트, 데이터셋 다운로드, 학습 및 모델 배포(ONNX / Int8)를 진행합니다.
 
 ## 🎯 프로젝트 주요 목표
 
