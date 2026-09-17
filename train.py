@@ -155,7 +155,19 @@ def run_training(args, device, is_tpu=False):
 def main(args):
     if args.tpu and TPU_AVAILABLE:
         print("🚀 Starting Google Colab TPU Training via PyTorch XLA...")
-        xmp.spawn(_main_tpu, args=(args,), nprocs=8, start_method='fork')
+        try:
+            supported_devices = xm.get_xla_supported_devices()
+            num_devices = len(supported_devices)
+        except Exception:
+            num_devices = 1
+            
+        if num_devices > 1:
+            print(f"✅ 멀티코어 TPU 감지됨 ({num_devices} 코어): xmp.spawn 병렬 실행")
+            xmp.spawn(_main_tpu, args=(args,), nprocs=num_devices, start_method='fork')
+        else:
+            print(f"✅ 단일코어 TPU 감지됨 (v5e-1 등): 단일 프로세스로 즉시 실행")
+            device = xm.xla_device()
+            run_training(args, device, is_tpu=True)
     else:
         if args.tpu and not TPU_AVAILABLE:
             print("⚠️ Colab TPU를 요청했으나 torch_xla 패키지가 없습니다. 일반 환경으로 fallback 합니다.")
